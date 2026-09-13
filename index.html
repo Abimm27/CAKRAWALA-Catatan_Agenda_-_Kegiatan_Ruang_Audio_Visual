@@ -818,7 +818,7 @@
                 <span id="fileUploadPreviewName" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
                 <button type="button" id="fileUploadRemoveBtn" style="background:none; border:none; color: var(--danger); font-weight:600; cursor:pointer; font-size:12px; flex-shrink:0;">Hapus</button>
               </div>
-              <div id="fileUploadProgress" style="display:none; margin-top:8px; font-size:12px; color: var(--chalk-gold-dim);">Mengunggah file... <span id="fileUploadProgressPct">0%</span></div>
+              <div id="fileUploadProgress" style="display:none; margin-top:8px; font-size:12px; color: var(--chalk-gold-dim);">⏳ Mengunggah file ke Google Drive, mohon tunggu...</div>
             </div>
             <button type="submit" class="btn-submit" id="reservationSubmitBtn">Ajukan Reservasi</button>
           </form>
@@ -1168,10 +1168,9 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 
   <script>
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5Qd9asciIBDWFwz-mgN25PvcN9IV64T7XPLbyGKOAjq81njRYdd2bq5rhu_ZltOyX/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwLWDhbNvGNWn-hXsWaEkL0y9DbdAxK7vOdfsf3uuPAqMZx7mQWCo-X4ich5MsluYME/exec";
     // Konfigurasi Firebase Project kamu (project: pendataan-avr — sudah terhubung)
     const firebaseConfig = {
       apiKey: "AIzaSyA6c6CUmLxSbvT47Uk8WO_3UJZ8jq6OCKY",
@@ -1187,7 +1186,6 @@
       firebase.initializeApp(firebaseConfig);
     }
     const db = firebase.firestore();
-    const storage = firebase.storage();
 
     document.addEventListener('DOMContentLoaded', function() {
       // 1. Cek localStorage dulu (buat tampilan cepat / non-security)
@@ -1210,6 +1208,7 @@
           localStorage.removeItem('userRole');
           localStorage.removeItem('userName');
           localStorage.removeItem('userKelas');
+          localStorage.removeItem('uploadTicket');
           window.location.href = 'login.html';
           return;
         }
@@ -1317,6 +1316,7 @@
         localStorage.removeItem('userRole');
         localStorage.removeItem('userName');
         localStorage.removeItem('userKelas');
+        localStorage.removeItem('uploadTicket');
         firebase.auth().signOut().finally(function() {
           window.location.href = 'login.html';
         });
@@ -1369,6 +1369,52 @@
           fileUploadPreview.style.display = 'none';
         });
 
+        // ================== UPLOAD FILE KE GOOGLE DRIVE (via Apps Script) ==================
+        // Tidak pakai Firebase Storage supaya tidak perlu upgrade ke plan Blaze (berbayar).
+        // File dikirim sebagai base64 ke Apps Script, yang lalu menyimpannya ke Google Drive
+        // dan mengembalikan link filenya untuk disimpan di Firestore.
+        function fileToBase64(file){
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]); // buang prefix "data:mime;base64,"
+            reader.onerror = () => reject(new Error('Gagal membaca file.'));
+            reader.readAsDataURL(file);
+          });
+        }
+
+        async function uploadFileToDrive(file, reservasiId){
+          const uploadTicket = localStorage.getItem('uploadTicket');
+          if(!uploadTicket){
+            return { ok: false, message: 'Sesi upload tidak valid. Silakan logout lalu login ulang.' };
+          }
+          try {
+            const base64Data = await fileToBase64(file);
+            const response = await fetch(APPS_SCRIPT_URL, {
+              method: 'POST',
+              // Content-Type text/plain sengaja dipakai (bukan application/json) supaya
+              // browser tidak mengirim preflight OPTIONS -- Apps Script Web App tidak
+              // menangani preflight dengan baik, sama seperti kasus CORS kemarin.
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+              body: JSON.stringify({
+                action: 'uploadFile',
+                uploadTicket: uploadTicket,
+                reservasiId: reservasiId,
+                fileName: file.name,
+                mimeType: file.type || 'application/octet-stream',
+                fileData: base64Data
+              })
+            });
+            const result = await response.json();
+            if(result.status === 'success'){
+              return { ok: true, fileUrl: result.fileUrl };
+            }
+            return { ok: false, message: result.message || 'Gagal mengunggah file.' };
+          } catch (err) {
+            console.error('Gagal upload file ke Drive:', err);
+            return { ok: false, message: 'Gagal terhubung ke server upload. Periksa koneksi internet.' };
+          }
+        }
+
         reservationForm.addEventListener('submit', async function(e) {
           e.preventDefault();
           
@@ -1402,8 +1448,8 @@
           submitBtn.disabled = true;
 
           try {
-            // Bikin referensi dokumen dulu (dapat ID-nya) SEBELUM ditulis ke Firestore,
-            // supaya file di Storage bisa disimpan di folder yang namanya = ID reservasi ini.
+            // Bikin referensi dokumen dulu (dapat ID-nya) SEBELUM upload file,
+            // supaya file di Drive bisa dikaitkan ke ID reservasi ini lewat namanya.
             const docRef = db.collection('reservasi').doc();
 
             let fileUrl = null;
@@ -1414,19 +1460,15 @@
               submitBtn.textContent = 'Mengunggah file...';
               document.getElementById('fileUploadProgress').style.display = 'block';
 
-              const storageRef = storage.ref(`reservasi_files/${docRef.id}/${selectedFile.name}`);
-              const uploadTask = storageRef.put(selectedFile);
-
-              fileUrl = await new Promise((resolve, reject) => {
-                uploadTask.on('state_changed',
-                  (snapshot) => {
-                    const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-                    document.getElementById('fileUploadProgressPct').textContent = pct + '%';
-                  },
-                  (err) => reject(err),
-                  async () => resolve(await uploadTask.snapshot.ref.getDownloadURL())
-                );
-              });
+              const uploadResult = await uploadFileToDrive(selectedFile, docRef.id);
+              if(!uploadResult.ok){
+                alert(uploadResult.message || 'Gagal mengunggah file. Coba lagi.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalBtnText;
+                document.getElementById('fileUploadProgress').style.display = 'none';
+                return;
+              }
+              fileUrl = uploadResult.fileUrl;
               fileName = selectedFile.name;
               document.getElementById('fileUploadProgress').style.display = 'none';
             }
