@@ -105,7 +105,6 @@
   .user-info { margin-bottom: 40px; }
   .user-info p { font-size: 13px; color: rgba(244,241,230,0.6); margin-bottom: 4px; }
   .user-info h3 { font-family: 'Fraunces', serif; font-size: 20px; font-weight: 500; }
-  .user-info .user-greeting { margin-top: 8px; margin-bottom: 0; font-size: 13px; color: rgba(244,241,230,0.75); }
   
   .nav-menu { display: flex; flex-direction: column; gap: 12px; flex: 1; }
   .nav-item {
@@ -712,7 +711,6 @@
     <div class="user-info">
       <p>Masuk sebagai</p>
       <h3 id="displayRole">Memuat...</h3>
-      <p class="user-greeting" id="userGreeting"></p>
     </div>
     <nav class="nav-menu">
       <div class="nav-item active" id="btnDashboard">Dashboard Ruang AVR</div>
@@ -1228,7 +1226,19 @@
         document.getElementById('displayRole').textContent = `${savedName} (${savedRole})`;
       }
 
-      // Kalimat sambutan otomatis, menyesuaikan role + nama yang login (dari localStorage).
+      // 2. Navigasi Sidebar dan Panel
+      const btnDashboard = document.getElementById('btnDashboard');
+      const btnKalender = document.getElementById('btnKalender');
+      
+      const userPanel = document.getElementById('userPanel');
+      const adminPanel = document.getElementById('adminPanel');
+      const kalenderPanel = document.getElementById('kalenderPanel');
+      
+      const pageTitle = document.getElementById('pageTitle');
+      const pageSubtitle = document.getElementById('pageSubtitle');
+      const navItems = document.querySelectorAll('.nav-item');
+
+       // Kalimat sambutan otomatis, menyesuaikan role + nama yang login (dari localStorage).
       const greetingEl = document.getElementById('userGreeting');
       if (greetingEl) {
         const roleLower = (savedRole || '').toLowerCase();
@@ -1242,18 +1252,6 @@
         }
         greetingEl.textContent = greetingText;
       }
-
-      // 2. Navigasi Sidebar dan Panel
-      const btnDashboard = document.getElementById('btnDashboard');
-      const btnKalender = document.getElementById('btnKalender');
-      
-      const userPanel = document.getElementById('userPanel');
-      const adminPanel = document.getElementById('adminPanel');
-      const kalenderPanel = document.getElementById('kalenderPanel');
-      
-      const pageTitle = document.getElementById('pageTitle');
-      const pageSubtitle = document.getElementById('pageSubtitle');
-      const navItems = document.querySelectorAll('.nav-item');
 
       // ================== UI/UX MOBILE: SIDEBAR JADI DRAWER (hamburger menu) ==================
       // Di layar kecil, sidebar disembunyikan (lihat CSS @media) dan dibuka lewat tombol hamburger
